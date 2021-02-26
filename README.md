@@ -4,15 +4,19 @@
 [repurl]:https://goreportcard.com/report/github.com/ardnew/lsi
 
 # lsi
-#### lsi
+#### Follow elements of a file path
 
 [![GoDoc][docimg]][docurl] [![Go Report Card][repimg]][repurl]
+
+`lsi` is a Go library module and command-line utility for analyzing file paths. It clones the same functionality as the `namei` utility from the [`util-linux` package](https://www.kernel.org/pub/linux/utils/util-linux/), whose manpage accurately describes `lsi` as well:
+> __lsi__  interprets  its arguments as pathnames to any type of Unix file (symlinks, files, directories, and so forth). __lsi__ then follows each path‐name until an endpoint is found (a file, a directory, a device node, etc). If it finds a symbolic link, it shows the link, and starts following it, indenting the output to show the context.
+
 
 ## Usage
 
 Running `lsi` without any flags or arguments will simply print the path components from your current directory, one per line:
 
-```sh
+```
 $ lsi
 /
 home
@@ -21,7 +25,7 @@ andrew
 
 To view a long listing for each of the path components, similar to `ls -l` from GNU Coreutils, use the `-l` flag:
 
-```sh
+```
 $ lsi -l
 drwxr-xr-x   root   root 4096 @ /
 drwxr-xr-x   root   root 4096   home
@@ -32,7 +36,7 @@ Notice that the `-l` flag also indicates whether an individual component represe
 
 By default, symlinks encountered are followed up until the two paths coincide, and each level of indirection is represented by indentation preceding the file name. Multiple paths may be specified at once:
 
-```sh
+```
 $  lsi -l /bin/vi /proc/self/exe
 -- /bin/vi
 drwxr-xr-x root root    4096 @ /
@@ -86,6 +90,6 @@ flags:
 
 Use the builtin Go package manager:
 
-```sh
+```
 go get -v github.com/ardnew/lsi/cmd/lsi
 ```
