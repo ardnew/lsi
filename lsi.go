@@ -17,7 +17,7 @@ var IndentWidth = 2
 type WalkFunc func(c Component) (follow bool, err error)
 
 func Walk(path string, fn WalkFunc) error {
-	return walk(path, 0, fn)
+	return walk("", path, 0, fn)
 }
 
 type Component struct {
@@ -39,7 +39,7 @@ type Component struct {
 	Err    error
 }
 
-func MakeComponent(path, volume, name string, level int) Component {
+func MakeComponent(from, path, volume, name string, level int) Component {
 	var (
 		link, mod, usr, grp string
 		uid, gid            int
@@ -47,11 +47,15 @@ func MakeComponent(path, volume, name string, level int) Component {
 		size                int64
 	)
 
-	info, err := os.Lstat(path)
+	// Since we are not actually navigating directories (chdir), we have to build
+	// our paths relative to where we are from.
+	dest := filepath.Join(from, path)
+
+	info, err := os.Lstat(dest)
 	if nil == err {
 		// If given path is a symlink, try to determine its target.
 		if 0 != info.Mode()&fs.ModeSymlink {
-			link, err = os.Readlink(path)
+			link, err = os.Readlink(dest)
 		}
 		// Create a symbolic mode string.
 		mod = mode(info)
@@ -61,8 +65,8 @@ func MakeComponent(path, volume, name string, level int) Component {
 	if nil == err {
 		// Try to determine our parent's device ID. If this is different from our
 		// own, then we can assume we are a mount point.
-		if abs, aerr := filepath.Abs(path); nil == aerr {
-			if parent := filepath.Dir(abs); parent != path {
+		if abs, aerr := filepath.Abs(dest); nil == aerr {
+			if parent := filepath.Dir(abs); parent != dest {
 				if pinfo, perr := os.Stat(parent); nil == perr {
 					switch stat := pinfo.Sys().(type) {
 					case *syscall.Stat_t:
@@ -200,7 +204,7 @@ func mode(info os.FileInfo) string {
 	return string(s)
 }
 
-func walk(path string, level int, fn WalkFunc) error {
+func walk(from, path string, level int, fn WalkFunc) error {
 
 	var elem []string
 	var volume string
@@ -255,7 +259,7 @@ func walk(path string, level int, fn WalkFunc) error {
 
 	// Create a Component and invoke user callback for each path from elem.
 	for i, e := range elem {
-		c := MakeComponent(filepath.Join(elem[:i+1]...), volume, e, level)
+		c := MakeComponent(from, filepath.Join(elem[:i+1]...), volume, e, level)
 		// Invoke user callback to determine if processing should continue.
 		// If continuing with a symlink, the callback also determines if we should
 		// follow the symlink to its target.
@@ -266,7 +270,11 @@ func walk(path string, level int, fn WalkFunc) error {
 		}
 		// If component is a symlink and callback allows it, traverse its target.
 		if follow && c.Link != "" {
-			if err := walk(c.Link, level+1, fn); nil != err {
+			var rel string
+			if !filepath.IsAbs(c.Link) {
+				rel = filepath.Join(from, filepath.Join(elem[:i]...))
+			}
+			if err := walk(rel, c.Link, level+1, fn); nil != err {
 				return err
 			}
 		}
