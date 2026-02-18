@@ -1,6 +1,7 @@
-package lsi
+package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,15 +13,18 @@ import (
 	"unicode"
 )
 
-var IndentWidth = 2
+const indentWidth = 2
 
-type WalkFunc func(c Component) (follow bool, err error)
+// walkFunc is called for each path element discovered during traversal.
+type walkFunc func(ctx context.Context, e entry) (follow bool, err error)
 
-func Walk(path string, fn WalkFunc) error {
-	return walk("", path, 0, fn)
+// walk traverses the given path, invoking fn for each element encountered.
+func walk(ctx context.Context, path string, fn walkFunc) error {
+	return walkRecursive(ctx, "", path, 0, fn)
 }
 
-type Component struct {
+// entry represents a single path element with its associated metadata.
+type entry struct {
 	Path   string
 	Volume string
 	Name   string
@@ -39,7 +43,19 @@ type Component struct {
 	Err    error
 }
 
-func MakeComponent(from, path, volume, name string, level int) Component {
+// makeEntry creates an entry for the given path component.
+func makeEntry(ctx context.Context, from, path, volume, name string, level int) entry {
+	// Check for context cancellation early.
+	if ctx.Err() != nil {
+		return entry{
+			Path:   path,
+			Volume: volume,
+			Name:   name,
+			Level:  level,
+			Err:    ctx.Err(),
+		}
+	}
+
 	var (
 		link, mod, usr, grp string
 		uid, gid            int
@@ -47,24 +63,21 @@ func MakeComponent(from, path, volume, name string, level int) Component {
 		size                int64
 	)
 
-	// Since we are not actually navigating directories (chdir), we have to build
-	// our paths relative to where we are from.
+	// Build paths relative to where we are from.
 	dest := filepath.Join(from, path)
 
 	info, err := os.Lstat(dest)
 	if nil == err {
-		// If given path is a symlink, try to determine its target.
+		// If given path is a symlink, determine its target.
 		if 0 != info.Mode()&fs.ModeSymlink {
 			link, err = os.Readlink(dest)
 		}
-		// Create a symbolic mode string.
 		mod = mode(info)
 	}
 
 	pdev = ^uint64(0) // Surely no device would really have this...
 	if nil == err {
-		// Try to determine our parent's device ID. If this is different from our
-		// own, then we can assume we are a mount point.
+		// Determine parent's device ID to detect mount points.
 		if abs, aerr := filepath.Abs(dest); nil == aerr {
 			if parent := filepath.Dir(abs); parent != dest {
 				if pinfo, perr := os.Stat(parent); nil == perr {
@@ -78,21 +91,17 @@ func MakeComponent(from, path, volume, name string, level int) Component {
 	}
 
 	if nil == err {
-		// Now try to determine the given path's owner and group.
-		// The following will be OS-specific and has not been tested anywhere
-		// other than Linux.
+		// Determine owner and group (OS-specific, tested on Linux).
 		switch stat := info.Sys().(type) {
 		case *syscall.Stat_t:
 			dev, inode, size = stat.Dev, stat.Ino, stat.Size
 			uid, gid = int(stat.Uid), int(stat.Gid)
-			// We must convert the integer UID/GID to decimal strings for the OS or
-			// syscall API. No idea why, but them's the rules.
 			ustr := strconv.FormatInt(int64(uid), 10)
 			if u, e := user.LookupId(ustr); nil != e {
 				err = e
 				break
 			} else {
-				usr = u.Username // u.User contains the user's fullname, not username
+				usr = u.Username
 			}
 			gstr := strconv.FormatInt(int64(gid), 10)
 			if g, e := user.LookupGroupId(gstr); nil != e {
@@ -104,7 +113,7 @@ func MakeComponent(from, path, volume, name string, level int) Component {
 		}
 	}
 
-	return Component{
+	return entry{
 		Path:   path,
 		Volume: volume,
 		Name:   name,
@@ -124,62 +133,29 @@ func MakeComponent(from, path, volume, name string, level int) Component {
 	}
 }
 
-func (c *Component) String() string {
-	if c.Err == nil {
-		return fmt.Sprintf("%s %s %s %s", c.Mode, c.User, c.Group, c.FmtName())
-	}
-	return fmt.Sprintf(" * %s: %s", c.Name, c.Err)
-}
-
-func (c *Component) FmtName() string {
+// fmtName returns the entry name with indentation and link target if applicable.
+func (e *entry) fmtName() string {
 	var link string
-	if c.Link != "" {
-		link = " -> " + c.Link
+	if e.Link != "" {
+		link = " -> " + e.Link
 	}
-	return fmt.Sprintf("%*s%s%s", IndentWidth*c.Level, "", c.Name, link)
+	return fmt.Sprintf("%*s%s%s", indentWidth*e.Level, "", e.Name, link)
 }
 
-// mode returns a symbolic string representation for the filesystem attributes
-// of the file described by the given os.FileInfo.
-//
-// Note that the symbols used here are GNU coreutils convention (the same ones
-// used by `ls`) and not the ones used by standard Go (package "io/fs").
-//
-// Because of this, we use only a single rune for the type attributes (the
-// leading rune, specifically), and we combine the setuid/setgid/sticky symbols
-// with the permission symbols the same way `ls` does.
-//
-// Furthermore, the following extended attributes all share a common symbol '+'
-// that is appended to the end of the mode string: Append-only, Exclusive Use,
-// Temporary File. Since these attributes are not commonly-encountered, and they
-// do not affect behavior until the user attempts I/O on its content, we simply
-// provide the symbol as a hint that other attributes exist and may need to be
-// considered (e.g., `chattr` and family).
-//
-// These deviations from standard Go mean we always return a mode string that is
-// exactly 10 (or 11 if xattr symbol '+' appended) bytes long. In contrast, for
-// example, Go produces mode strings of variable length depending on the number
-// of attribute bits that are set. But since the variable-length portion of the
-// string is *prepended* to the front of the string, it makes for ugly/complex
-// formatting when trying to align columns in any output.
+// mode returns a symbolic string representation for filesystem attributes.
+// Uses GNU coreutils convention (like `ls`) rather than standard Go.
 func mode(info os.FileInfo) string {
-
-	// Start with the full-width mode string, and modify runes at specific index
-	// to build the result.
 	s := []rune("-rwxrwxrwx")
 	m := info.Mode()
 
-	// For any bit not set in the lower-9 bits (permissions), replace the
-	// corresponding rune with a dash.
+	// Replace unset permission bits with dashes.
 	for i := len(s) - 1; i > 0; i-- {
 		if 0 == m&(1<<uint(i-1)) {
 			s[len(s)-i] = '-'
 		}
 	}
 
-	// For each of the file attribute bits that describe the type of file, replace
-	// the leading rune of the mode string with a representative symbol.
-
+	// Set the leading rune based on file type.
 	const attr = "d---lbps--c-?" // standard Go = "dalTLDpSugct?"
 	for i, c := range attr {
 		if (c != '-') && (m&(1<<uint(32-1-i)) != 0) {
@@ -188,43 +164,32 @@ func mode(info os.FileInfo) string {
 	}
 
 	if 0 != m&fs.ModeSetuid {
-		s[3] = mapRune('s', 0 == m&(1<<8)) // if mode & 0400 then 's', else 'S'
+		s[3] = upperIf('s', 0 == m&(1<<8))
 	}
 	if 0 != m&fs.ModeSetgid {
-		s[6] = mapRune('s', 0 == m&(1<<5)) // if mode & 0040 then 's', else 'S'
+		s[6] = upperIf('s', 0 == m&(1<<5))
 	}
 	if 0 != m&fs.ModeSticky {
-		s[9] = mapRune('t', 0 == m&(1<<2)) // if mode & 0004 then 't', else 'T'
+		s[9] = upperIf('t', 0 == m&(1<<2))
 	}
 
 	if 0 != m&(fs.ModeAppend|fs.ModeExclusive|fs.ModeTemporary) {
-		s = append(s, '+') // catch-all indicator for extended attributes
+		s = append(s, '+')
 	}
 
 	return string(s)
 }
 
-func walk(from, path string, level int, fn WalkFunc) error {
-
-	var elem []string
-	var volume string
-
-	// Always reduce the path lexically. This does not use the actual filesystem
-	// in any way, but it does remove garbage that isn't useful to anyone trying
-	// to analyze a given path.
+// splitPath separates a path into its volume and element components.
+func splitPath(path string) (elem []string, volume string) {
+	// Always reduce the path lexically.
 	path = filepath.Clean(path)
 
-	// The difference in handling between relative and absolute file paths is
-	// subtle, but it's complicated by the ways they can be expressed on different
-	// systems (Unix vs. Windows).
-	// So we first separate the parsing based on path relativity, and then we
-	// handle the path based on target system.
+	// Handle absolute and relative paths differently.
 	if filepath.IsAbs(path) {
-		var root string // drive/UNC volume on Windows, otherwise "/"
-		var start int   // index of first byte following root separator
+		var root string
+		var start int
 
-		// Check if we have a volume, e.g., drive letter or UNC share, which is only
-		// present on Windows. Otherwise, VolumeName always returns an empty string.
 		if vol := filepath.VolumeName(path); vol != "" {
 			volume = vol
 			root = vol + string(filepath.Separator)
@@ -234,47 +199,51 @@ func walk(from, path string, level int, fn WalkFunc) error {
 			start = 1
 		}
 
-		// Set the volume/root as first element, and append any remaining trailing
-		// path components.
 		elem = []string{root}
 		if len(path) > start {
 			elem = append(elem, strings.Split(path[start:], string(filepath.Separator))...)
 		}
 	} else {
-		var start int // index of first byte following volume separator
+		var start int
 
-		// Check if we have a volume, e.g., drive letter or UNC share, which is only
-		// present on Windows. Otherwise, VolumeName always returns an empty string.
 		if vol := filepath.VolumeName(path); vol != "" {
 			volume = vol
 			start = len(vol)
 		}
 
-		// For relative paths (which have been lexically cleaned), we can simply
-		// split the path into components delimited by the directory separator.
 		if len(path) > start {
 			elem = strings.Split(path, string(filepath.Separator))
 		}
 	}
 
-	// Create a Component and invoke user callback for each path from elem.
-	for i, e := range elem {
-		c := MakeComponent(from, filepath.Join(elem[:i+1]...), volume, e, level)
-		// Invoke user callback to determine if processing should continue.
-		// If continuing with a symlink, the callback also determines if we should
-		// follow the symlink to its target.
-		follow, err := fn(c)
-		// Stop processing and return immediately if callback returns an error.
+	return
+}
+
+// walkRecursive recursively traverses path elements.
+func walkRecursive(ctx context.Context, from, path string, level int, fn walkFunc) error {
+	// Check for context cancellation.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	elem, volume := splitPath(path)
+
+	// Invoke callback for each path element.
+	for i, name := range elem {
+		e := makeEntry(ctx, from, filepath.Join(elem[:i+1]...), volume, name, level)
+
+		follow, err := fn(ctx, e)
 		if nil != err {
 			return err
 		}
-		// If component is a symlink and callback allows it, traverse its target.
-		if follow && c.Link != "" {
+
+		// If entry is a symlink and callback allows it, traverse its target.
+		if follow && e.Link != "" {
 			var rel string
-			if !filepath.IsAbs(c.Link) {
+			if !filepath.IsAbs(e.Link) {
 				rel = filepath.Join(from, filepath.Join(elem[:i]...))
 			}
-			if err := walk(rel, c.Link, level+1, fn); nil != err {
+			if err := walkRecursive(ctx, rel, e.Link, level+1, fn); nil != err {
 				return err
 			}
 		}
@@ -283,9 +252,8 @@ func walk(from, path string, level int, fn WalkFunc) error {
 	return nil
 }
 
-// mapRune returns the given rune as uppercase if and only if upper is true,
-// otherwise it returns the given rune as lowercase.
-func mapRune(c rune, upper bool) rune {
+// upperIf returns the rune as uppercase if upper is true, otherwise lowercase.
+func upperIf(c rune, upper bool) rune {
 	if upper {
 		return unicode.ToUpper(c)
 	}

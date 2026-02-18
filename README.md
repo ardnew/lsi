@@ -8,9 +8,8 @@
 
 [![GoDoc][docimg]][docurl] [![Go Report Card][repimg]][repurl]
 
-`lsi` is a Go library module and command-line utility for analyzing file paths. It clones the same functionality as the `namei` utility from the [`util-linux` package](https://www.kernel.org/pub/linux/utils/util-linux/), whose manpage accurately describes `lsi` as well:
-> __lsi__  interprets  its arguments as pathnames to any type of Unix file (symlinks, files, directories, and so forth). __lsi__ then follows each path‐name until an endpoint is found (a file, a directory, a device node, etc). If it finds a symbolic link, it shows the link, and starts following it, indenting the output to show the context.
-
+`lsi` is a command-line utility for analyzing file paths. It provides similar functionality to the `namei` utility from the [`util-linux` package](https://www.kernel.org/pub/linux/utils/util-linux/):
+> __lsi__ interprets its arguments as pathnames to any type of Unix file (symlinks, files, directories, and so forth). __lsi__ then follows each path‐name until an endpoint is found (a file, a directory, a device node, etc). If it finds a symbolic link, it shows the link, and starts following it, indenting the output to show the context.
 
 ## Usage
 
@@ -75,7 +74,7 @@ usage:
 
 flags:
   -v  Display version information.
-  -a  Display change history.
+  -t  Timeout duration (e.g., 30s, 5m). Default: unlimited.
   -n  Do not follow symlinks.
   -l  Output using long format (-p -u -g -s -m).
   -p  Output file type and permissions.
@@ -86,10 +85,26 @@ flags:
   -m  Output mount point symbols (@).
 ```
 
+### Timeout Support
+
+The `-t` flag allows you to set a timeout for path traversal operations, useful when dealing with potentially slow or problematic filesystems:
+
+```sh
+# Set a 30 second timeout
+$ lsi -t 30s /mnt/slow-network-share
+
+# Set a 5 minute timeout
+$ lsi -t 5m /deep/directory/tree
+```
+
+If the timeout is exceeded, `lsi` will report the elapsed time and exit gracefully.
+
 ## Installation
 
-Use the builtin Go package manager:
+### From Source
 
-```
-go get -v github.com/ardnew/lsi/cmd/lsi
+Requires Go 1.21 or later:
+
+```sh
+go install github.com/ardnew/lsi@latest
 ```
