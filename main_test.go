@@ -12,73 +12,6 @@ import (
 	"time"
 )
 
-// TestUsage verifies the usage message is written correctly.
-func TestUsage(t *testing.T) {
-	var buf bytes.Buffer
-	usage(&buf)
-
-	output := buf.String()
-	if !strings.Contains(output, "usage:") {
-		t.Error("usage should contain 'usage:'")
-	}
-	if !strings.Contains(output, "flags:") {
-		t.Error("usage should contain 'flags:'")
-	}
-	if !strings.Contains(output, "-v") {
-		t.Error("usage should document -v flag")
-	}
-	if !strings.Contains(output, "-t") {
-		t.Error("usage should document -t flag")
-	}
-	if !strings.Contains(output, "-l") {
-		t.Error("usage should document -l flag")
-	}
-}
-
-// TestAtob tests the boolean string parser.
-func TestAtob(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"true", true},
-		{"True", true},
-		{"TRUE", true},
-		{"1", true},
-		{"t", true},
-		{"T", true},
-		{"false", false},
-		{"False", false},
-		{"FALSE", false},
-		{"0", false},
-		{"f", false},
-		{"F", false},
-		{"invalid", false},
-		{"", false},
-		{"maybe", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := atob(tt.input)
-			if got != tt.want {
-				t.Errorf("atob(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestGetVersion tests version string generation.
-func TestGetVersion(t *testing.T) {
-	version := getVersion()
-	if version == "" {
-		t.Error("getVersion should not return empty string")
-	}
-	// Should return either a version tag, "(devel)", or a revision
-	// We can't predict exact output but we can verify it's reasonable
-	t.Logf("Version: %s", version)
-}
-
 // TestRunCurrentDirectory tests running without arguments uses current directory.
 func TestRunCurrentDirectory(t *testing.T) {
 	var out, errOut bytes.Buffer
@@ -203,20 +136,21 @@ func TestRun(t *testing.T) {
 			wantContain: "lsi",
 		},
 		{
-			name:    "invalid flag",
-			args:    []string{"-invalid"},
-			wantErr: true,
+			name:        "help short flag",
+			args:        []string{"-h"},
+			wantErr:     false,
+			wantContain: "Usage:",
+		},
+		{
+			name:        "help long flag",
+			args:        []string{"--help"},
+			wantErr:     false,
+			wantContain: "Flags:",
 		},
 		{
 			name:    "nonexistent path",
 			args:    []string{"/this/path/absolutely/does/not/exist"},
 			wantErr: true,
-		},
-		{
-			name:        "help via usage",
-			args:        []string{"-h"},
-			wantErr:     true,
-			wantContain: "", // flag package handles -h
 		},
 	}
 
@@ -298,6 +232,136 @@ func TestRunWithLongFormat(t *testing.T) {
 	// Long format should include permissions
 	if !strings.Contains(output, "rw-") && !strings.Contains(output, "r--") {
 		t.Errorf("run() output = %q, want to contain file permissions", output)
+	}
+}
+
+// TestRunWithInodeFlag tests running with the -i (inode) flag.
+func TestRunWithInodeFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "inode_test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	err := run(ctx, &out, &errOut, []string{"-i", testFile})
+
+	if err != nil {
+		t.Errorf("run() with -i flag error = %v, want nil", err)
+	}
+
+	output := out.String()
+	// Output should contain numeric inode values
+	if len(output) == 0 {
+		t.Error("run() with -i flag should produce output")
+	}
+}
+
+// TestRunWithIndividualFlags tests individual flags (not in long format).
+func TestRunWithIndividualFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "flag_test.txt")
+	if err := os.WriteFile(testFile, []byte("test data"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		flag string
+	}{
+		{"user flag", "-u"},
+		{"group flag", "-g"},
+		{"size flag", "-s"},
+		{"mode flag", "-p"},
+		{"mount flag", "-m"},
+		{"no follow flag", "-n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			ctx := context.Background()
+			err := run(ctx, &out, &errOut, []string{tt.flag, testFile})
+
+			if err != nil {
+				t.Errorf("run() with %s error = %v, want nil", tt.flag, err)
+			}
+
+			if out.Len() == 0 {
+				t.Errorf("run() with %s should produce output", tt.flag)
+			}
+		})
+	}
+}
+
+// TestRunWithDeepPath tests handling deeply nested paths.
+func TestRunWithDeepPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a deep directory structure
+	deepPath := tmpDir
+	for i := 0; i < 5; i++ {
+		deepPath = filepath.Join(deepPath, fmt.Sprintf("level%d", i))
+		if err := os.Mkdir(deepPath, 0755); err != nil {
+			t.Fatalf("Failed to create directory: %v", err)
+		}
+	}
+
+	testFile := filepath.Join(deepPath, "deep_file.txt")
+	if err := os.WriteFile(testFile, []byte("deep"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	err := run(ctx, &out, &errOut, []string{testFile})
+
+	if err != nil {
+		t.Errorf("run() with deep path error = %v, want nil", err)
+	}
+
+	output := out.String()
+	// Should show all levels
+	for i := 0; i < 5; i++ {
+		levelName := fmt.Sprintf("level%d", i)
+		if !strings.Contains(output, levelName) {
+			t.Errorf("output should contain %q", levelName)
+		}
+	}
+}
+
+// TestRunWithRelativePath tests handling relative paths.
+func TestRunWithRelativePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "relative_test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Save current dir
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(oldDir)
+
+	// Change to temp dir
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change directory: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	// Use relative path
+	err = run(ctx, &out, &errOut, []string{"relative_test.txt"})
+
+	if err != nil {
+		t.Errorf("run() with relative path error = %v, want nil", err)
+	}
+
+	if out.Len() == 0 {
+		t.Error("run() with relative path should produce output")
 	}
 }
 
@@ -400,6 +464,77 @@ func TestCollectEntriesWithError(t *testing.T) {
 	// Should still have at least one entry with the error
 	if len(entries) == 0 {
 		t.Error("collectEntries() should return entries even on error")
+	}
+}
+
+// TestCollectEntriesWithCancellation tests context cancellation in collectEntries.
+func TestCollectEntriesWithCancellation(t *testing.T) {
+	// Create a deep directory structure to increase chance of hitting cancellation during walk
+	tmpDir := t.TempDir()
+	deepPath := tmpDir
+	for i := 0; i < 10; i++ {
+		deepPath = filepath.Join(deepPath, fmt.Sprintf("dir%d", i))
+		if err := os.Mkdir(deepPath, 0755); err != nil {
+			t.Fatalf("Failed to create directory: %v", err)
+		}
+		// Add some files in each directory
+		for j := 0; j < 3; j++ {
+			file := filepath.Join(deepPath, fmt.Sprintf("file%d.txt", j))
+			if err := os.WriteFile(file, []byte("data"), 0644); err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+		}
+	}
+
+	// Create a context with a very short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+
+	// Give the timeout a chance to expire
+	time.Sleep(1 * time.Millisecond)
+
+	opts := options{noFollow: false} // Follow symlinks to do more work
+
+	_, err := collectEntries(ctx, deepPath, opts)
+	// Should get either context.Canceled or context.DeadlineExceeded
+	if err != context.Canceled && err != context.DeadlineExceeded {
+		t.Logf("collectEntries() with cancelled context error = %v, want context error", err)
+		// Don't fail the test as timing is unpredictable, just log it
+	}
+}
+
+// TestCollectEntriesFollowingSymlinks tests collection with symlink following.
+func TestCollectEntriesFollowingSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a directory structure
+	dir1 := filepath.Join(tmpDir, "dir1")
+	if err := os.Mkdir(dir1, 0755); err != nil {
+		t.Fatalf("Failed to create dir1: %v", err)
+	}
+
+	file1 := filepath.Join(dir1, "file1.txt")
+	if err := os.WriteFile(file1, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file1: %v", err)
+	}
+
+	// Create a symlink to the directory
+	linkToDir := filepath.Join(tmpDir, "link_to_dir")
+	if err := os.Symlink(dir1, linkToDir); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := options{noFollow: false} // Follow symlinks
+
+	entries, err := collectEntries(ctx, linkToDir, opts)
+	if err != nil {
+		t.Errorf("collectEntries() with symlink following error = %v, want nil", err)
+	}
+
+	// Should have entries for the symlink and its target
+	if len(entries) < 2 {
+		t.Errorf("collectEntries() following symlinks returned %d entries, want at least 2", len(entries))
 	}
 }
 

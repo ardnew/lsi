@@ -1,0 +1,9 @@
+lsi
+*.exe
+
+*.log
+*.out
+
+*.md
+!README.md
+!CHANGELOG.md

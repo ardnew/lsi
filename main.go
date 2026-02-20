@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -17,106 +15,11 @@ const (
 	command = "lsi"
 
 	mountPointSymbol = "@"
-
-	// shortRevisionLength is the number of characters to display from a git
-	// commit hash. This matches the convention used by git log --oneline and
-	// is typically sufficient to uniquely identify a commit in most repositories.
-	shortRevisionLength = 7
-
-	// defaultTimeout is the default duration before canceling path traversal.
-	defaultTimeout = 0
 )
-
-// options holds all command-line flag values.
-type options struct {
-	version  bool
-	timeout  time.Duration
-	noFollow bool
-	long     bool
-	mode     bool
-	user     bool
-	group    bool
-	size     bool
-	inode    bool
-	mount    bool
-}
 
 // widths tracks the maximum width needed for each column.
 type widths struct {
 	mode, user, group, size, inode int
-}
-
-func usage(w io.Writer) {
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(w, "usage:\n")
-		fmt.Fprintf(w, "  %s [flags] [--] [PATH ...]\n", command)
-	} else {
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = resolved
-		}
-		exe = filepath.Base(exe)
-		fmt.Fprintf(w, "usage:\n")
-		fmt.Fprintf(w, "  %s [flags] [--] [PATH ...]\n", exe)
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "flags:")
-	fmt.Fprintln(w, "  -v  Display version information.")
-	fmt.Fprintln(w, "  -t  Timeout duration (e.g., 30s, 5m). Default: unlimited.")
-	fmt.Fprintln(w, "  -n  Do not follow symlinks.")
-	fmt.Fprintln(w, "  -l  Output using long format (-p -u -g -s -m).")
-	fmt.Fprintln(w, "  -p  Output file type and permissions.")
-	fmt.Fprintln(w, "  -u  Output file owner.")
-	fmt.Fprintln(w, "  -g  Output file group.")
-	fmt.Fprintln(w, "  -s  Output file size (bytes).")
-	fmt.Fprintln(w, "  -i  Output file inode.")
-	fmt.Fprintln(w, "  -m  Output mount point symbols ("+mountPointSymbol+").")
-}
-
-// atob parses a string as a boolean value.
-func atob(s string) bool {
-	b, err := strconv.ParseBool(s)
-	return err == nil && b
-}
-
-// getVersion returns the version string for the lsi binary.
-// It attempts to extract version information from VCS (git) tags via build info.
-// If no version is available, it returns "(devel)".
-func getVersion() string {
-	const unversioned = "(devel)"
-
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return unversioned
-	}
-
-	// Check if Main.Version has the version (from git tag)
-	if info.Main.Version != "" && info.Main.Version != unversioned {
-		return info.Main.Version
-	}
-
-	// Try to build version from VCS information
-	var revision, modified string
-	for _, setting := range info.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			if len(setting.Value) >= shortRevisionLength {
-				revision = setting.Value[:shortRevisionLength]
-			} else {
-				revision = setting.Value
-			}
-		case "vcs.modified":
-			if atob(setting.Value) {
-				modified = "-modified"
-			}
-		}
-	}
-
-	if revision != "" {
-		return revision + modified
-	}
-
-	return unversioned
 }
 
 // contextError creates an error describing why context was canceled.
@@ -147,24 +50,18 @@ func main() {
 
 // run executes the main program logic.
 func run(ctx context.Context, out, errOut io.Writer, args []string) error {
-	var opts options
+	// Check for help flag manually before parsing.
+	// This allows us to show help without flaggy interfering.
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			showHelp(out)
+			return nil
+		}
+	}
 
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
-	fs.SetOutput(errOut)
-	fs.Usage = func() { usage(errOut) }
-
-	fs.BoolVar(&opts.version, "v", false, "")
-	fs.DurationVar(&opts.timeout, "t", defaultTimeout, "")
-	fs.BoolVar(&opts.noFollow, "n", false, "")
-	fs.BoolVar(&opts.long, "l", false, "")
-	fs.BoolVar(&opts.mode, "p", false, "")
-	fs.BoolVar(&opts.user, "u", false, "")
-	fs.BoolVar(&opts.group, "g", false, "")
-	fs.BoolVar(&opts.size, "s", false, "")
-	fs.BoolVar(&opts.inode, "i", false, "")
-	fs.BoolVar(&opts.mount, "m", false, "")
-
-	if err := fs.Parse(args); err != nil {
+	// Parse command-line flags.
+	opts, paths, err := parseFlags(args)
+	if err != nil {
 		return err
 	}
 
@@ -175,7 +72,6 @@ func run(ctx context.Context, out, errOut io.Writer, args []string) error {
 	}
 
 	// Determine the file paths to analyze.
-	paths := fs.Args()
 	if len(paths) == 0 {
 		// If no paths were given, use PWD.
 		wd, err := os.Getwd()
@@ -183,11 +79,6 @@ func run(ctx context.Context, out, errOut io.Writer, args []string) error {
 			return fmt.Errorf("failed to get current working directory: %w", err)
 		}
 		paths = []string{wd}
-	}
-
-	// Configure the meta-flags.
-	if opts.long {
-		opts.mode, opts.user, opts.group, opts.size, opts.mount = true, true, true, true, true
 	}
 
 	// Set up timeout if specified.

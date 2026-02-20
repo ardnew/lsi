@@ -22,7 +22,34 @@ home
 andrew
 ```
 
-To view a long listing for each of the path components, similar to `ls -l` from GNU Coreutils, use the `-l` flag:
+### Flags
+
+`lsi` supports both short (`-flag`) and long (`--flag`) format flags following GNU conventions. Use the `-h` or `--help` flag for a summary of all options:
+
+```
+$ lsi --help
+lsi - Analyze file paths by traversing and displaying each path component
+
+Usage:
+  lsi [flags] [--] [PATH ...]
+
+Flags:
+  -h --help          Display this help message
+  -v --version       Display version information
+  -t --timeout       Timeout duration (e.g., 30s, 5m)
+  -n --no-follow     Do not follow symlinks
+  -l --long          Output using long format (-p -u -g -s -m)
+  -p --permissions   Output file type and permissions
+  -u --user          Output file owner
+  -g --group         Output file group
+  -s --size          Output file size (bytes)
+  -i --inode         Output file inode
+  -m --mount         Output mount point symbols (@)
+```
+
+### Long Format
+
+To view a long listing for each of the path components, similar to `ls -l` from GNU Coreutils, use the `-l` or `--long` flag:
 
 ```
 $ lsi -l
@@ -32,6 +59,8 @@ drwxr-xr-x andrew andrew 4096   andrew
 ```
 
 Notice that the `-l` flag also indicates whether an individual component represents a mount point using the `@` symbol preceding the file name. Therefore, in the above example, we can be confident all of these files exist on the same physical device.
+
+### Symlinks
 
 By default, symlinks encountered are followed up until the two paths coincide, and each level of indirection is represented by indentation preceding the file name. Multiple paths may be specified at once:
 
@@ -66,40 +95,47 @@ drwxrwsr-x andrew developer    4096     bin
 -rwxrwxr-x andrew developer 2871632     lsi
 ```
 
-Use the `-h` flag for a summary of all options available:
+Use the `-n` or `--no-follow` flag to prevent following symlinks:
 
 ```
-usage:
-  lsi [flags] [--] [PATH ...]
-
-flags:
-  -v  Display version information.
-  -t  Timeout duration (e.g., 30s, 5m). Default: unlimited.
-  -n  Do not follow symlinks.
-  -l  Output using long format (-p -u -g -s -m).
-  -p  Output file type and permissions.
-  -u  Output file owner.
-  -g  Output file group.
-  -s  Output file size (bytes).
-  -i  Output file inode.
-  -m  Output mount point symbols (@).
+$ lsi --no-follow /bin/vi
 ```
 
 ### Timeout Support
 
-The `-t` flag allows you to set a timeout for path traversal operations, useful when dealing with potentially slow or problematic filesystems:
+The `-t` or `--timeout` flag allows you to set a timeout for path traversal operations, useful when dealing with potentially slow or problematic filesystems:
 
 ```sh
 # Set a 30 second timeout
 $ lsi -t 30s /mnt/slow-network-share
 
-# Set a 5 minute timeout
-$ lsi -t 5m /deep/directory/tree
+# Using long form with equals syntax
+$ lsi --timeout=5m /deep/directory/tree
 ```
 
 If the timeout is exceeded, `lsi` will report the elapsed time and exit gracefully.
 
 ## Installation
+
+### From Releases (Recommended)
+
+Download pre-built binaries from the [releases page](https://github.com/ardnew/lsi/releases):
+
+```sh
+# Linux (amd64)
+wget https://github.com/ardnew/lsi/releases/latest/download/lsi-VERSION-linux-amd64.tar.gz
+tar -xzf lsi-VERSION-linux-amd64.tar.gz
+sudo mv lsi-VERSION-linux-amd64/lsi /usr/local/bin/
+
+# macOS (arm64)
+wget https://github.com/ardnew/lsi/releases/latest/download/lsi-VERSION-darwin-arm64.tar.gz
+tar -xzf lsi-VERSION-darwin-arm64.tar.gz
+sudo mv lsi-VERSION-darwin-arm64/lsi /usr/local/bin/
+
+# Windows (amd64)
+# Download lsi-VERSION-windows-amd64.zip from releases page
+# Extract and add to PATH
+```
 
 ### From Source
 

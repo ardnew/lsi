@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -79,10 +80,39 @@ func TestSplitPath(t *testing.T) {
 			wantElem:   []string{"rel", "path"},
 			wantVolume: "",
 		},
+		{
+			name:       "absolute path with volume (Windows C:)",
+			path:       `C:\Users\test`,
+			wantElem:   []string{`C:\`, "Users", "test"},
+			wantVolume: "C:",
+		},
+		{
+			name:       "absolute path with volume (Windows D:)",
+			path:       `D:\Program Files\app`,
+			wantElem:   []string{`D:\`, "Program Files", "app"},
+			wantVolume: "D:",
+		},
+		{
+			name:       "relative path with volume (Windows)",
+			path:       `C:relative\path`,
+			wantElem:   []string{"C:relative", "path"},
+			wantVolume: "C:",
+		},
+		{
+			name:       "UNC path (Windows network)",
+			path:       `\\server\share\file`,
+			wantElem:   []string{`\\server\share\`, "file"},
+			wantVolume: `\\server\share`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Skip Windows path tests on non-Windows platforms
+			if runtime.GOOS != "windows" && strings.Contains(tt.name, "Windows") {
+				t.Skip("Windows path test - skipping on non-Windows platform")
+			}
+
 			gotElem, gotVolume := splitPath(tt.path)
 
 			if gotVolume != tt.wantVolume {
@@ -237,6 +267,43 @@ func TestModeSetuid(t *testing.T) {
 	if !strings.HasSuffix(got, "+") {
 		t.Errorf("mode() with ModeAppend = %q, want '+' suffix", got)
 	}
+
+	// Test setuid without owner read bit (to trigger uppercase S)
+	// This tests the edge case where bit 8 is NOT set
+	// Note: This is unusual but tests the code path at lsi.go:168
+	infoSetuidNoRead := mockFileInfo{
+		mode: 0044 | fs.ModeSetuid, // No owner permissions, group read, other read
+		name: "setuid_no_ownerread",
+	}
+	gotSetuid := mode(infoSetuidNoRead)
+	// Position 3 should be 'S' because bit 8 (owner read) is not set
+	if len(gotSetuid) < 4 || gotSetuid[3] != 'S' {
+		t.Errorf("mode() with setuid but no owner read = %q, want 'S' at position 3", gotSetuid)
+	}
+
+	// Test setgid without group read bit (to trigger uppercase S)
+	// This tests the edge case where bit 5 is NOT set
+	infoSetgidNoRead := mockFileInfo{
+		mode: 0404 | fs.ModeSetgid, // Owner read, no group perms, other read
+		name: "setgid_no_groupread",
+	}
+	gotSetgid := mode(infoSetgidNoRead)
+	// Position 6 should be 'S' because bit 5 (group read) is not set
+	if len(gotSetgid) < 7 || gotSetgid[6] != 'S' {
+		t.Errorf("mode() with setgid but no group read = %q, want 'S' at position 6", gotSetgid)
+	}
+
+	// Test sticky bit without other read bit (to trigger uppercase T)
+	// This tests the edge case where bit 2 is NOT set
+	infoStickyNoRead := mockFileInfo{
+		mode: 0440 | fs.ModeSticky, // Owner/group read, no other perms
+		name: "sticky_no_otherread",
+	}
+	gotSticky := mode(infoStickyNoRead)
+	// Position 9 should be 'T' because bit 2 (other read) is not set
+	if len(gotSticky) < 10 || gotSticky[9] != 'T' {
+		t.Errorf("mode() with sticky bit but no other read = %q, want 'T' at position 9", gotSticky)
+	}
 }
 
 // TestEntryFmtName tests entry name formatting.
@@ -373,6 +440,31 @@ func TestMakeEntryWithSymlink(t *testing.T) {
 	// Mode should indicate symlink
 	if !strings.HasPrefix(e.Mode, "l") {
 		t.Errorf("makeEntry() Mode = %q, want to start with 'l'", e.Mode)
+	}
+}
+
+// TestMakeEntryWithBrokenSymlink tests handling of broken symlinks.
+func TestMakeEntryWithBrokenSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a symlink pointing to a non-existent target
+	brokenLink := filepath.Join(tmpDir, "broken_link")
+	nonExistent := filepath.Join(tmpDir, "does_not_exist")
+	if err := os.Symlink(nonExistent, brokenLink); err != nil {
+		t.Fatalf("Failed to create broken symlink: %v", err)
+	}
+
+	ctx := context.Background()
+	e := makeEntry(ctx, tmpDir, "broken_link", "", "broken_link", 0)
+
+	// Should still create an entry, possibly with an error or marking it as broken
+	if e.Name == "" {
+		t.Error("makeEntry() should still return entry for broken symlink")
+	}
+
+	// The symlink itself should be stat-able via Lstat
+	if e.Mode == "" {
+		t.Error("makeEntry() Mode should not be empty for broken symlink")
 	}
 }
 
