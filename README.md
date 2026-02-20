@@ -32,6 +32,7 @@ lsi - Analyze file paths by traversing and displaying each path component
 
 Usage:
   lsi [flags] [--] [PATH ...]
+  lsi completion [SHELL]
 
 Flags:
   -h --help          Display this help message
@@ -45,6 +46,64 @@ Flags:
   -s --size          Output file size (bytes)
   -i --inode         Output file inode
   -m --mount         Output mount point symbols (@)
+
+Subcommands:
+  completion [SHELL] Generate shell completion script
+                     SHELL: bash, zsh, fish, powershell
+                     If omitted, auto-detects from environment
+```
+
+### Shell Completion
+
+`lsi` can generate shell completion scripts for bash, zsh, fish, and PowerShell. The completion script can either be specified explicitly or auto-detected from your environment:
+
+#### Bash
+
+```sh
+# Enable completion for current session
+source <(lsi completion bash)
+
+# Add to your ~/.bashrc for persistent completion
+echo 'eval "$(lsi completion bash)"' >> ~/.bashrc
+```
+
+#### Zsh
+
+```sh
+# Enable completion for current session
+source <(lsi completion zsh)
+
+# Add to your ~/.zshrc for persistent completion
+echo 'eval "$(lsi completion zsh)"' >> ~/.zshrc
+
+# Or save to a file in your $fpath
+lsi completion zsh > ~/.zsh/completions/_lsi
+```
+
+#### Fish
+
+```sh
+# Save to fish completions directory
+lsi completion fish > ~/.config/fish/completions/lsi.fish
+```
+
+#### PowerShell
+
+```powershell
+# Add to your PowerShell profile
+lsi completion powershell | Out-String | Invoke-Expression
+
+# Or add this line to your profile:
+Invoke-Expression -Command $(lsi completion powershell | Out-String)
+```
+
+#### Auto-Detection
+
+If you don't specify a shell, `lsi` will auto-detect your current shell from environment variables:
+
+```sh
+# Auto-detects bash, zsh, fish, or powershell
+lsi completion
 ```
 
 ### Long Format

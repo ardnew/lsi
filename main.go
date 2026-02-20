@@ -50,6 +50,18 @@ func main() {
 
 // run executes the main program logic.
 func run(ctx context.Context, out, errOut io.Writer, args []string) error {
+	// Check for completion subcommand first.
+	if len(args) > 0 && args[0] == "completion" {
+		shell := ""
+		if len(args) > 1 {
+			shell = args[1]
+		} else {
+			// Auto-detect shell from environment
+			shell = detectShell()
+		}
+		return generateCompletion(out, shell)
+	}
+
 	// Check for help flag manually before parsing.
 	// This allows us to show help without flaggy interfering.
 	for _, arg := range args {

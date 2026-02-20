@@ -149,7 +149,8 @@ func getVersion() string {
 func showHelp(w io.Writer) {
 	fmt.Fprintf(w, "%s - Analyze file paths by traversing and displaying each path component\n\n", command)
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintf(w, "  %s [flags] [--] [PATH ...]\n\n", command)
+	fmt.Fprintf(w, "  %s [flags] [--] [PATH ...]\n", command)
+	fmt.Fprintf(w, "  %s completion [SHELL]\n\n", command)
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  -h --help          Display this help message")
 	fmt.Fprintln(w, "  -v --version       Display version information")
@@ -161,5 +162,9 @@ func showHelp(w io.Writer) {
 	fmt.Fprintln(w, "  -g --group         Output file group")
 	fmt.Fprintln(w, "  -s --size          Output file size (bytes)")
 	fmt.Fprintln(w, "  -i --inode         Output file inode")
-	fmt.Fprintf(w, "  -m --mount         Output mount point symbols (%s)\n", mountPointSymbol)
+	fmt.Fprintf(w, "  -m --mount         Output mount point symbols (%s)\n\n", mountPointSymbol)
+	fmt.Fprintln(w, "Subcommands:")
+	fmt.Fprintln(w, "  completion [SHELL] Generate shell completion script")
+	fmt.Fprintln(w, "                     SHELL: bash, zsh, fish, powershell")
+	fmt.Fprintln(w, "                     If omitted, auto-detects from environment")
 }
