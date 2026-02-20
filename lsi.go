@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"unicode"
 )
 
@@ -75,42 +72,10 @@ func makeEntry(ctx context.Context, from, path, volume, name string, level int) 
 		mod = mode(info)
 	}
 
-	pdev = ^uint64(0) // Surely no device would really have this...
 	if nil == err {
-		// Determine parent's device ID to detect mount points.
-		if abs, aerr := filepath.Abs(dest); nil == aerr {
-			if parent := filepath.Dir(abs); parent != dest {
-				if pinfo, perr := os.Stat(parent); nil == perr {
-					switch stat := pinfo.Sys().(type) {
-					case *syscall.Stat_t:
-						pdev = uint64(stat.Dev)
-					}
-				}
-			}
-		}
-	}
-
-	if nil == err {
-		// Determine owner and group (OS-specific, tested on Linux).
-		switch stat := info.Sys().(type) {
-		case *syscall.Stat_t:
-			dev, inode, size = uint64(stat.Dev), stat.Ino, stat.Size
-			uid, gid = int(stat.Uid), int(stat.Gid)
-			ustr := strconv.FormatInt(int64(uid), 10)
-			if u, e := user.LookupId(ustr); nil != e {
-				err = e
-				break
-			} else {
-				usr = u.Username
-			}
-			gstr := strconv.FormatInt(int64(gid), 10)
-			if g, e := user.LookupGroupId(gstr); nil != e {
-				err = e
-				break
-			} else {
-				grp = g.Name
-			}
-		}
+		pdev = getParentDevice(dest)
+		dev, inode, size = getDeviceInfo(info)
+		usr, grp, uid, gid, err = getOwnerInfo(info)
 	}
 
 	return entry{
