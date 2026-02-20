@@ -83,7 +83,7 @@ func makeEntry(ctx context.Context, from, path, volume, name string, level int) 
 				if pinfo, perr := os.Stat(parent); nil == perr {
 					switch stat := pinfo.Sys().(type) {
 					case *syscall.Stat_t:
-						pdev = stat.Dev
+						pdev = uint64(stat.Dev)
 					}
 				}
 			}
@@ -94,7 +94,7 @@ func makeEntry(ctx context.Context, from, path, volume, name string, level int) 
 		// Determine owner and group (OS-specific, tested on Linux).
 		switch stat := info.Sys().(type) {
 		case *syscall.Stat_t:
-			dev, inode, size = stat.Dev, stat.Ino, stat.Size
+			dev, inode, size = uint64(stat.Dev), stat.Ino, stat.Size
 			uid, gid = int(stat.Uid), int(stat.Gid)
 			ustr := strconv.FormatInt(int64(uid), 10)
 			if u, e := user.LookupId(ustr); nil != e {

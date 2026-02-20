@@ -4,8 +4,13 @@
 #
 # Usage:
 #   ./release.sh [major|minor|patch|prerelease]
+#   ./release.sh changes
 #
 # Default: minor
+#
+# Arguments:
+#   major|minor|patch|prerelease - Version bump type (default: minor)
+#   changes                      - Dry-run: show CHANGELOG.md changes without releasing
 #
 # Requirements:
 #   - git
@@ -47,15 +52,15 @@ PLATFORMS=(
 
 # Helper functions
 log_info() {
-	echo -e "${BLUE}==>${NC} $*"
+	echo -e "${BLUE}==>${NC} $*" >&2
 }
 
 log_success() {
-	echo -e "${GREEN}✓${NC} $*"
+	echo -e "${GREEN}✓${NC} $*" >&2
 }
 
 log_warn() {
-	echo -e "${YELLOW}⚠${NC} $*"
+	echo -e "${YELLOW}⚠${NC} $*" >&2
 }
 
 log_error() {
@@ -169,25 +174,58 @@ update_changelog() {
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 EOF
 	fi
 
-	# Get commit messages since last release
-	local commits
+	# Build changelog content grouped by commit
+	local commits=""
+	local commit_count=0
+
 	if [ -n "$prev_version" ]; then
 		log_info "Getting commits since $prev_version..."
-		commits=$(git log "${prev_version}..HEAD" --pretty=format:"- %s" --no-merges)
+		range="${prev_version}..HEAD"
 	else
 		log_info "No previous version found, getting all commits..."
-		commits=$(git log --pretty=format:"- %s" --no-merges)
+		range="HEAD"
 	fi
 
-	if [ -z "$commits" ]; then
-		log_warn "No commits found since last release"
-		commits="- Initial release"
+	# Process each commit
+	while IFS= read -r commit_hash; do
+		# Get short hash (7 chars)
+		local short_hash
+		short_hash=$(git log -1 --format=%h "$commit_hash")
+
+		# Get first line (summary)
+		local summary
+		summary=$(git log -1 --format=%s "$commit_hash")
+
+		# Get commit body (skip first line and empty lines)
+		local body
+		body=$(git log -1 --format=%B "$commit_hash" | tail -n +2 | sed '/^$/d')
+
+		# Add commit section header
+		commits="${commits}### (${short_hash}) ${summary}\n\n"
+
+		# Add body lines as bullet points if body exists
+		if [ -n "$body" ]; then
+			while IFS= read -r line; do
+				if [ -n "$line" ]; then
+					# Remove leading "- " if present (avoid double bullets)
+					line=$(echo "$line" | sed 's/^- //')
+					commits="${commits}- ${line}\n"
+				fi
+			done <<<"$body"
+			commits="${commits}\n"
+		fi
+
+		commit_count=$((commit_count + 1))
+	done < <(git log "$range" --format=%H --no-merges)
+
+	if [ $commit_count -eq 0 ]; then
+		log_warn "No commits found"
+		commits="### Initial release\n\n- Initial release\n"
 	fi
 
 	# Create temporary file with new entry
@@ -210,8 +248,7 @@ EOF
 	{
 		echo "## [$version] - $(date +%Y-%m-%d)"
 		echo ""
-		echo "$commits"
-		echo ""
+		echo -e "$commits"
 	} >>"$temp_file"
 
 	# Append rest of the changelog
@@ -223,6 +260,97 @@ EOF
 	mv "$temp_file" CHANGELOG.md
 
 	log_success "CHANGELOG.md updated"
+}
+
+# Show what changes would be added to CHANGELOG (dry-run)
+show_changelog_preview() {
+	local bump_type="${1:-minor}"
+	local prev_version
+	prev_version=$(get_previous_version)
+
+	# Compute what the next version would be (silently)
+	local version
+	if command -v svu &>/dev/null; then
+		version=$(svu "$bump_type" 2>/dev/null || echo "v0.1.0")
+		# Ensure version starts with 'v'
+		if [[ ! "$version" =~ ^v ]]; then
+			version="v$version"
+		fi
+	else
+		log_warn "svu not installed, using placeholder version"
+		version="vX.Y.Z"
+	fi
+
+	echo ""
+	log_info "=== CHANGELOG.md Preview ==="
+	echo ""
+	log_info "This would be inserted into CHANGELOG.md:"
+	echo ""
+	echo "## [$version] - $(date +%Y-%m-%d)"
+	echo ""
+
+	# Get commit messages grouped by commit
+	local commits=""
+	if [ -n "$prev_version" ]; then
+		while IFS= read -r commit_hash; do
+			local short_hash
+			short_hash=$(git log -1 --format=%h "$commit_hash")
+			local subject
+			subject=$(git log -1 --format=%s "$commit_hash")
+			local body
+			body=$(git log -1 --format=%b "$commit_hash" | sed '/^$/d')
+
+			echo "### ($short_hash) $subject"
+			echo ""
+
+			if [ -n "$body" ]; then
+				while IFS= read -r line; do
+					if [ -n "$line" ]; then
+						# Remove leading "- " if present (avoid double bullets)
+						line=$(echo "$line" | sed 's/^- //')
+						echo "- ${line}"
+					fi
+				done <<<"$body"
+			else
+				# No body, just note the commit
+				echo "- $subject"
+			fi
+			echo ""
+			commits="found"
+		done < <(git log "${prev_version}..HEAD" --format=%H --no-merges)
+	else
+		while IFS= read -r commit_hash; do
+			local short_hash
+			short_hash=$(git log -1 --format=%h "$commit_hash")
+			local subject
+			subject=$(git log -1 --format=%s "$commit_hash")
+			local body
+			body=$(git log -1 --format=%b "$commit_hash" | sed '/^$/d')
+
+			echo "### ($short_hash) $subject"
+			echo ""
+
+			if [ -n "$body" ]; then
+				while IFS= read -r line; do
+					if [ -n "$line" ]; then
+						line=$(echo "$line" | sed 's/^- //')
+						echo "- ${line}"
+					fi
+				done <<<"$body"
+			else
+				echo "- $subject"
+			fi
+			echo ""
+			commits="found"
+		done < <(git log --format=%H --no-merges)
+	fi
+
+	if [ -z "$commits" ]; then
+		echo "### Initial Release"
+		echo ""
+		echo "- Initial release"
+		echo ""
+	fi
 }
 
 # Build binary for specific platform
@@ -373,6 +501,13 @@ commit_and_tag() {
 # Main function
 main() {
 	local bump_type="${1:-minor}"
+
+	# Handle 'changes' dry-run command
+	if [ "$bump_type" = "changes" ]; then
+		shift
+		show_changelog_preview "${1:-minor}"
+		exit 0
+	fi
 
 	echo ""
 	log_info "=== $PROJECT_NAME Release Script ==="
